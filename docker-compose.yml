@@ -1,0 +1,68 @@
+# ==============================================================================
+# Stack: VazouMeusDados - Plataforma de Conscientização e Segurança
+# Descrição: Orquestração do contêiner da aplicação web Python (Streamlit).
+#            Configurado para provisionamento ágil, persistência de código-fonte
+#            via bind mount e exposição de porta para acoplamento com proxies
+#            reversos externos (como NGINX UI, Traefik ou Apache).
+# ==============================================================================
+
+services:
+  vazou_meus_dados:
+    # ── 1. Imagem e Configuração do Contêiner ─────────────────────────────────
+    
+    # Utiliza a variação 'slim' do Debian com Python 3.11 pré-instalado.
+    # Esta escolha reduz drasticamente o tamanho da imagem e a superfície
+    # de ataque (menos pacotes desnecessários = maior segurança).
+    image: python:3.11-slim
+    
+    # Nome fixo e identificável para facilitar a administração via CLI 
+    # (ex: docker logs vazou_meus_dados_app) e painéis de gerência (Portainer).
+    container_name: vazou_meus_dados_app
+    
+    # Define o diretório raiz de trabalho dentro do sistema de arquivos do
+    # contêiner. Todas as instruções subsequentes assumirão este escopo.
+    working_dir: /app
+    
+    # Política de tolerância a falhas: garante que o contêiner seja reiniciado
+    # automaticamente em caso de crash da aplicação ou reinicialização do Host.
+    restart: unless-stopped
+    
+    # ── 2. Instruções de Inicialização (Entrypoint) ───────────────────────────
+    
+    # O comando shell encadeado realiza duas ações críticas em tempo de execução:
+    # 1. Lê o arquivo 'requirements.txt' do volume mapeado e instala as dependências.
+    # 2. Inicializa o servidor Streamlit escutando explicitamente em '0.0.0.0'.
+    # A flag '--server.address=0.0.0.0' é obrigatória no Docker para que a
+    # aplicação aceite tráfego externo à interface de rede isolada do contêiner.
+    command: >
+      sh -c "pip install -r requirements.txt &&
+      streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
+      
+    # ── 3. Topologia de Rede e Exposição ──────────────────────────────────────
+    
+    ports:
+      # Mapeamento [Porta_do_Host]:[Porta_do_Contêiner].
+      # Expõe o serviço nativamente no Host para que balanceadores de carga ou
+      # proxies reversos localizados em outras sub-redes/VMs possam rotear
+      # o tráfego HTTP/WebSocket adequadamente.
+      - "8501:8501"
+      
+    # ── 4. Gerenciamento de Volumes e Persistência ────────────────────────────
+    
+    volumes:
+      # Estratégia de 'Bind Mount': Espelha o diretório atual do host ('./')
+      # para dentro do diretório '/app' do contêiner.
+      # Vantagem: Permite edição do código ('app.py') e aplicação imediata
+      # no frontend sem necessidade de recriar (build) a imagem do Docker.
+      - ./:/app
+
+    # ── 5. Políticas de Retenção de Logs ──────────────────────────────────────
+    
+    logging:
+      # Utiliza o driver JSON padrão, porém impõe limites estritos.
+      driver: "json-file"
+      options:
+        # Previne a exaustão de espaço em disco (I/O) limitando cada arquivo
+        # de log a 10 Megabytes e retendo apenas os 3 últimos arquivos rotacionados.
+        max-size: "10m"
+        max-file: "3"
