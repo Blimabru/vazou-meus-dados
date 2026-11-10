@@ -145,15 +145,16 @@ Copie `.env.example` para `.env` na mesma pasta do `docker-compose.yml` e ajuste
 |---|---:|---|---|
 | `HOST_IP` | Não | `127.0.0.1` | IP do host onde a porta será publicada. Use `0.0.0.0` para todas as interfaces. |
 | `HOST_PORT` | Não | `8501` | Porta exposta no host. |
-| `CONTAINER_PORT` | Não | `8501` | Porta do Streamlit dentro do contêiner. |
 | `APP_VOLUME` | Não | `.` | Caminho do projeto no host montado em `/app`. |
+
+A aplicação usa internamente a porta fixa `8080` no contêiner. Apenas a porta
+publicada no host (`HOST_PORT`) precisa ser configurada.
 
 Exemplo para execução local:
 
 ```env
 HOST_IP=127.0.0.1
 HOST_PORT=8501
-CONTAINER_PORT=8501
 APP_VOLUME=.
 ```
 
@@ -162,7 +163,6 @@ Em produção, use um caminho absoluto para o volume:
 ```env
 HOST_IP=0.0.0.0
 HOST_PORT=8501
-CONTAINER_PORT=8501
 APP_VOLUME=/opt/vazou-meus-dados
 ```
 
@@ -175,7 +175,6 @@ No Portainer, adicione estas mesmas variáveis:
 ```text
 HOST_IP=0.0.0.0
 HOST_PORT=8501
-CONTAINER_PORT=8501
 APP_VOLUME=/opt/vazou-meus-dados
 ```
 
@@ -220,7 +219,7 @@ services:
     # aplicação aceite tráfego externo à interface de rede isolada do contêiner.
     command: >
       sh -c "pip install -r requirements.txt &&
-      streamlit run app.py --server.port=${CONTAINER_PORT:-8501} --server.address=0.0.0.0"
+      streamlit run app.py --server.port=8080 --server.address=0.0.0.0"
       
     # ── 3. Topologia de Rede e Exposição ──────────────────────────────────────
     
@@ -229,7 +228,7 @@ services:
       # Expõe o serviço nativamente no Host para que balanceadores de carga ou
       # proxies reversos localizados em outras sub-redes/VMs possam rotear
       # o tráfego HTTP/WebSocket adequadamente.
-      - "${HOST_IP:-127.0.0.1}:${HOST_PORT:-8501}:${CONTAINER_PORT:-8501}"
+      - "${HOST_IP:-127.0.0.1}:${HOST_PORT:-8501}:8080"
       
     # ── 4. Gerenciamento de Volumes e Persistência ────────────────────────────
     

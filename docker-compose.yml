@@ -36,7 +36,7 @@ services:
     # aplicação aceite tráfego externo à interface de rede isolada do contêiner.
     command: >
       sh -c "pip install -r requirements.txt &&
-      streamlit run app.py --server.port=${CONTAINER_PORT:-8501} --server.address=0.0.0.0"
+      streamlit run app.py --server.port=8080 --server.address=0.0.0.0"
       
     # ── 3. Topologia de Rede e Exposição ──────────────────────────────────────
     
@@ -45,7 +45,7 @@ services:
       # Expõe o serviço nativamente no Host para que balanceadores de carga ou
       # proxies reversos localizados em outras sub-redes/VMs possam rotear
       # o tráfego HTTP/WebSocket adequadamente.
-      - "${HOST_IP:-127.0.0.1}:${HOST_PORT:-8501}:${CONTAINER_PORT:-8501}"
+      - "${HOST_IP:-127.0.0.1}:${HOST_PORT:-8501}:8080"
       
     # ── 4. Gerenciamento de Volumes e Persistência ────────────────────────────
     
