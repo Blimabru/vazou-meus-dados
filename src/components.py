@@ -1,4 +1,9 @@
-"""Componentes de interface e apresentação dos resultados."""
+"""Componentes de interface e apresentação dos resultados.
+
+Este módulo concentra a camada de apresentação: recebe dados já consultados,
+normaliza campos externos e os transforma em componentes Streamlit acessíveis.
+Nenhuma função deste arquivo consulta diretamente a API.
+"""
 
 import re
 import base64
@@ -13,6 +18,7 @@ from src.translator import traduzir_texto
 
 
 def render_header():
+    """Renderiza a marca, a navegação contextual e as orientações rápidas."""
     with st.container(border=True):
         brand, nav = st.columns([2.2, 3.8], vertical_alignment="center")
         with brand:
@@ -39,11 +45,12 @@ def render_header():
 
 
 def render_loading():
-    """Exibe o indicador central durante a consulta à API."""
+    """Cria o espaço reservado para o indicador durante a consulta à API."""
     return st.empty()
 
 
 def preencher_loading(container):
+    """Preenche o espaço reservado com feedback visual de processamento."""
     container.markdown(
         """
         <div class="loading-screen">
@@ -57,6 +64,7 @@ def preencher_loading(container):
 
 
 def render_footer():
+    """Renderiza rodapé fixo com marca e links de referência pública."""
     logo_path = Path(LOGO_PATH)
     logo_data = base64.b64encode(logo_path.read_bytes()).decode("ascii")
     st.markdown(
@@ -79,6 +87,7 @@ def render_footer():
 
 
 def formatar_dados_vazados(dados):
+    """Converte listas ou strings delimitadas em itens limpos para exibição."""
     if not dados:
         return []
     itens = dados if isinstance(dados, list) else re.split(r"[,;|]", str(dados))
@@ -86,6 +95,11 @@ def formatar_dados_vazados(dados):
 
 
 def render_breach_card(detalhe):
+    """Renderiza um incidente individual retornado pela API.
+
+    Os campos são tratados como dados externos: valores ausentes recebem
+    rótulos neutros e URLs são validadas antes de serem oferecidas ao usuário.
+    """
     nome = detalhe.get("breach", "Site desconhecido")
     descricao = traduzir_texto(str(detalhe.get("details", "Sem detalhes adicionais.")))
     dados = formatar_dados_vazados(detalhe.get("xposed_data", ""))
@@ -96,10 +110,12 @@ def render_breach_card(detalhe):
     registros = detalhe.get("xposed_records", "Não informado")
     referencia = detalhe.get("references", "")
     verificado = detalhe.get("verified", "Não informado")
+    # O marcador facilita a leitura do risco sem alterar o dado original.
     senha_exposta = any(
         "password" in item.lower() or "senha" in item.lower() for item in dados
     )
 
+    # Texto puro é destacado separadamente por representar risco elevado.
     senha_em_texto_puro = "plain" in risco
 
     chips = "".join(
@@ -107,6 +123,7 @@ def render_breach_card(detalhe):
     )
     if senha_exposta and senha_em_texto_puro:
         chips = "<span class='chip chip-danger'>Senha em texto puro</span>" + chips
+    # A chave estável evita que o Streamlit recicle o estado de outro cartão.
     logo = detalhe.get("logo", "")
     card_key = f"breach-card-{re.sub(r'[^a-z0-9]+', '-', str(nome).lower()).strip('-')}"
     with st.container(key=card_key, border=True):
@@ -150,6 +167,7 @@ def render_breach_card(detalhe):
                 f"<span class='exposed-data-label'>Dados expostos:</span> {chips or 'Não especificado'}",
                 unsafe_allow_html=True,
             )
+            # Só exibimos navegação quando o domínio gera uma URL válida.
             if dominio:
                 site_url = dominio if dominio.startswith(("http://", "https://")) else f"https://{dominio}"
                 if urlparse(site_url).netloc:
@@ -159,6 +177,7 @@ def render_breach_card(detalhe):
 
 
 def mostrar_resumo(analytics, total):
+    """Exibe métricas resumidas do relatório detalhado de analytics."""
     if not analytics:
         return
     detalhes = analytics.get("ExposedBreaches", {}).get("breaches_details", [])

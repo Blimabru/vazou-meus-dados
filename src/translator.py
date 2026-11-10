@@ -1,4 +1,8 @@
-"""Tradução de textos públicos retornados pelos serviços de consulta."""
+"""Tradução de textos públicos retornados pelos serviços de consulta.
+
+O módulo usa cache para evitar chamadas repetidas e mantém o texto original
+quando o serviço externo falha, preservando a utilidade do relatório.
+"""
 
 import html
 import logging
@@ -9,13 +13,14 @@ import requests
 import streamlit as st
 
 LOGGER = logging.getLogger(__name__)
+# Endpoint externo de tradução; não recebe o e-mail consultado.
 TRANSLATION_URL = "https://api.mymemory.translated.net/get"
 _TRANSLATION_STATE_LOCK = Lock()
 _TRANSLATION_RATE_LIMIT_LOGGED = False
 
 
 def iniciar_busca_traducao():
-    """Reinicia o controle de avisos da API para uma nova busca."""
+    """Reinicia o aviso único de limite para o ciclo atual de busca."""
     global _TRANSLATION_RATE_LIMIT_LOGGED
     with _TRANSLATION_STATE_LOCK:
         _TRANSLATION_RATE_LIMIT_LOGGED = False
@@ -40,12 +45,17 @@ FALLBACK_TRANSLATIONS = {
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def traduzir_texto(texto, idioma_origem="en", idioma_destino="pt-BR"):
-    """Traduz um texto público e retorna o original quando a API falhar."""
+    """Traduz texto público com cache e fallback seguro para o original.
+
+    O cache de 24 horas reduz latência e pressão no serviço. Os contadores de
+    telemetria são atualizados apenas com dados operacionais, sem texto pessoal.
+    """
     texto_original = str(texto)
     texto = texto_original.strip()
     if not texto:
         return texto_original
 
+    # O dicionário cobre termos recorrentes mesmo quando a API está indisponível.
     fallback = FALLBACK_TRANSLATIONS.get(texto.lower(), texto_original)
     def registrar_fallback(rate_limited=False):
         from src.services import registrar_telemetria
@@ -54,6 +64,7 @@ def traduzir_texto(texto, idioma_origem="en", idioma_destino="pt-BR"):
         if rate_limited:
             registrar_telemetria("translation_rate_limits")
 
+    # Import local para evitar ciclo de importação entre serviços e tradução.
     from src.services import registrar_evento_api, registrar_telemetria
     inicio = time.monotonic()
     registrar_telemetria("translation_requests")
@@ -66,6 +77,7 @@ def traduzir_texto(texto, idioma_origem="en", idioma_destino="pt-BR"):
             },
             timeout=10,
         )
+        # O limite é informado uma vez por busca para não poluir o terminal.
         if response.status_code == 429:
             global _TRANSLATION_RATE_LIMIT_LOGGED
             with _TRANSLATION_STATE_LOCK:
@@ -79,6 +91,7 @@ def traduzir_texto(texto, idioma_origem="en", idioma_destino="pt-BR"):
             registrar_fallback(rate_limited=True)
             registrar_evento_api("translation", response.status_code, inicio, "rate_limit")
             return fallback
+        # Outros status HTTP seguem o tratamento padrão de exceções do requests.
         response.raise_for_status()
         translated = response.json().get("responseData", {}).get("translatedText")
         if translated:

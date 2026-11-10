@@ -1,13 +1,22 @@
-"""Estilos visuais da aplicação Streamlit."""
+"""Folha de estilos visual da aplicação Streamlit.
 
+O CSS é mantido em uma constante para ser aplicado em um único ponto do fluxo
+principal, garantindo consistência visual entre cartões, métricas e impressão.
+"""
+
+# O bloco é injetado no documento pelo Streamlit; por isso permanece como uma
+# string literal em vez de um arquivo CSS separado.
 CSS = """
 <style>
+/* Base escura e espaçamento inferior para acomodar o rodapé fixo. */
 .main {
     background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
     padding-bottom: 8rem;
 }
 .logo-wrap { margin: 0 auto 1rem; display: flex; justify-content: center; }
+/* Elementos de identidade e cartões usam contraste alto para acessibilidade. */
 .app-subtitle { text-align: center; font-size: 1.05rem; color: #dfe7f5; margin-bottom: 1rem; }
+/* Cartões de incidentes agrupam informações semânticas e mantêm hierarquia. */
 .breach-card {
     background: linear-gradient(180deg, rgba(15, 23, 42, .85), rgba(17, 24, 39, .95));
     border: 1px solid rgba(148, 163, 184, .25);
@@ -47,6 +56,7 @@ CSS = """
 .exposed-data-label {
     display: inline-block; margin-right: .4rem; color: #f8fafc; font-weight: 700;
 }
+/* Cores de risco são consistentes com os níveis exibidos pelo relatório. */
 .risk-badge {
     display: inline-block; padding: .3rem .7rem; border-radius: 999px;
     font-size: .8rem; font-weight: 700; margin-bottom: .7rem;
@@ -54,6 +64,7 @@ CSS = """
 .risk-high { background: rgba(239, 68, 68, .12); color: #fca5a5; border: 1px solid rgba(248, 113, 113, .4); }
 .risk-medium { background: rgba(245, 158, 11, .12); color: #fbbf24; border: 1px solid rgba(251, 191, 36, .4); }
 .risk-low { background: rgba(34, 197, 94, .12); color: #86efac; border: 1px solid rgba(74, 222, 128, .4); }
+/* Métricas têm altura fixa para evitar deslocamentos entre colunas. */
 .metric-box {
     background: linear-gradient(180deg, rgba(15, 23, 42, .88), rgba(30, 41, 59, .9));
     border: 1px solid rgba(148, 163, 184, .2); border-radius: 18px;
@@ -61,6 +72,7 @@ CSS = """
 }
 .metric-box .value { font-size: 2.1rem; font-weight: 800; color: #f8fafc; margin-bottom: .4rem; }
 .metric-box .label { color: #cbd5e1; font-size: .85rem; text-transform: uppercase; letter-spacing: .08em; }
+/* Área de confirmação usa SVG para manter o indicador nítido e acessível. */
 .confirmation-metric {
     box-sizing: border-box; height: 140px; padding: 1rem;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -91,9 +103,11 @@ CSS = """
     background: #1d4ed8; border-color: #60a5fa; color: #ffffff;
 }
 
+/* O rodapé não deve consumir espaço no relatório impresso. */
 @media print {
     .app-footer-fixed { display: none !important; }
 }
+/* Cabeçalho e rodapé compartilham a linguagem visual da aplicação. */
 .app-header {
     display: flex; align-items: center; justify-content: space-between; gap: 1rem;
     background: rgba(15, 23, 42, .86); border: 1px solid rgba(148, 163, 184, .2);

@@ -76,7 +76,22 @@ horária de uso, pontuações e faixas de risco, registros afetados, duração d
 renderização, falhas e limites da tradução, tempo/status dos endpoints da API,
 tipos de dados e setores recorrentes. A tabela `api_events` contém apenas
 endpoint, status, duração e tipo de erro; não contém URL de consulta, e-mail,
-IP ou User-Agent.
+IP ou User-Agent. Respostas que informem explicitamente expiração da API ou
+cooldown também são contabilizadas separadamente. A mensagem de cooldown só é
+exibida quando esse estado aparece no corpo retornado pela API; um `429` sem
+essa indicação continua sendo tratado como erro genérico de limite.
+Também é contabilizada a quantidade total de falhas nos endpoints
+`check-email` e `breach-analytics` da XposedOrNot.
+Além dos agregados, a tabela `metric_events` registra cada incremento
+individual com timestamp em milissegundos, nome da métrica e quantidade. Esse
+histórico não contém dados pessoais nem identificadores da consulta.
+
+O histórico técnico também registra status HTTP por classe, timeouts, respostas
+inválidas ou incompletas, duração e tamanho das respostas da API, intervalos
+entre buscas, faixas de registros expostos, buscas limpas, falhas de tradução,
+tempo de renderização e estados de expiração ou cooldown. As classificações
+usam somente os dados efetivamente retornados pelos serviços; não são
+inferidas a partir do e-mail consultado.
 
 ### Opção 1: Execução Local com Ambiente Virtual
 
