@@ -40,6 +40,7 @@ vazou-meus-dados/
 ├── app.py
 ├── assets/
 │   └── logo.png
+├── data/                 # Criada em runtime; métricas agregadas locais
 ├── docker-compose.yml
 ├── README.md
 ├── requirements.txt
@@ -57,6 +58,25 @@ O projeto usa uma estrutura simples por responsabilidade: `services.py` concentr
 a integração com a API, `components.py` concentra os componentes da interface,
 `styles.py` reúne o visual e `main.py` orquestra o fluxo da aplicação. O arquivo
 `app.py` permanece apenas como ponto de entrada do Streamlit.
+
+As métricas agregadas de acesso e busca são persistidas em `data/metrics.sqlite3`.
+Nenhum e-mail ou dado pessoal é armazenado; o arquivo contém somente contadores
+diários de acessos, buscas positivas, negativas e falhas. Em Docker, o bind mount
+da raiz preserva esse arquivo entre reinicializações do contêiner.
+
+Além dos contadores, o banco mantém a lista agregada de sites identificados em
+vazamentos (`affected_sites`), com quantidade de ocorrências e última data
+observada, além de métricas de incidentes confirmados, senhas expostas, texto
+puro, tipos de dados e setores afetados. A API não fornece uma lista de “sites
+seguros”; por isso, buscas sem resultado são contabilizadas como negativas, sem
+inventar uma lista de serviços não consultados.
+
+Também são persistidas métricas operacionais sem dados pessoais: distribuição
+horária de uso, pontuações e faixas de risco, registros afetados, duração de
+renderização, falhas e limites da tradução, tempo/status dos endpoints da API,
+tipos de dados e setores recorrentes. A tabela `api_events` contém apenas
+endpoint, status, duração e tipo de erro; não contém URL de consulta, e-mail,
+IP ou User-Agent.
 
 ### Opção 1: Execução Local com Ambiente Virtual
 

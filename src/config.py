@@ -7,6 +7,7 @@ APP_TITLE = "Vazou Meus Dados | Verificador de Segurança"
 APP_ICON = "🛡️"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOGO_PATH = PROJECT_ROOT / "assets" / "logo.png"
+METRICS_DB_PATH = PROJECT_ROOT / "data" / "metrics.sqlite3"
 PUBLIC_URL = "https://vazoumeusdados.plataformatech.online"
 SHARE_IMAGE_URL = "https://raw.githubusercontent.com/Blimabru/vazou-meus-dados/main/assets/logo.png"
 SHARE_DESCRIPTION = (
