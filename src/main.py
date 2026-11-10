@@ -65,17 +65,30 @@ def render_print_button():
     """Renderiza botão isolado que solicita impressão da janela principal."""
     markup = """
         <style>
-            body { margin: 0; background: transparent; }
             .report-actions { display: flex; justify-content: flex-end; }
             .print-report-button {
                 display: inline-flex; align-items: center; gap: .45rem;
-                padding: .55rem .9rem; border: 1px solid rgba(125, 211, 252, .4);
-                border-radius: 999px; background: rgba(14, 116, 144, .2);
-                color: #bae6fd; font: 700 13px sans-serif; cursor: pointer;
+                padding: .55rem .9rem;
+                border: 1px solid #0284c7;
+                border-color: light-dark(#0284c7, rgba(125, 211, 252, .45));
+                border-radius: 999px;
+                background: #e0f2fe;
+                background: light-dark(#e0f2fe, rgba(14, 116, 144, .25));
+                color: #0c4a6e;
+                color: light-dark(#0c4a6e, #bae6fd);
+                font: 700 13px sans-serif; cursor: pointer;
+                transition: background-color .2s ease, border-color .2s ease;
             }
             .print-report-button:hover {
-                background: rgba(14, 116, 144, .4);
-                border-color: rgba(125, 211, 252, .75);
+                background: #bae6fd;
+                background: light-dark(#bae6fd, rgba(14, 116, 144, .45));
+                border-color: #0369a1;
+                border-color: light-dark(#0369a1, rgba(125, 211, 252, .8));
+                color: #082f49;
+                color: light-dark(#082f49, #f0f9ff);
+            }
+            @media print {
+                .report-actions { display: none !important; }
             }
         </style>
         <div class="report-actions">
