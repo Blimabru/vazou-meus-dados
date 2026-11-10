@@ -1,4 +1,8 @@
-"""Orquestração da interface Streamlit."""
+"""Orquestração da interface Streamlit.
+
+O módulo coordena entrada do usuário, chamadas de serviço, estado da sessão,
+renderização do relatório e registro de telemetria operacional.
+"""
 
 import time
 import logging
@@ -17,9 +21,11 @@ from src.config import APP_ICON, APP_TITLE, PUBLIC_URL, SHARE_DESCRIPTION, SHARE
 from src.services import (
     buscar_analytics,
     buscar_vazamentos,
+    obter_status_api,
     registrar_acesso,
     registrar_busca,
     registrar_renderizacao,
+    registrar_telemetria,
 )
 from src.styles import CSS
 from src.translator import iniciar_busca_traducao
@@ -28,13 +34,17 @@ LOGGER = logging.getLogger(__name__)
 
 
 def limpar_busca():
+    """Remove o resultado atual e registra a ação sem guardar dados pessoais."""
+    registrar_telemetria("searches_cleared")
     st.session_state.email_input = ""
     st.session_state.resultado_vazamentos = None
     st.session_state.resultado_analytics = None
+    st.session_state.status_api = None
     st.session_state.consulta_realizada = False
 
 
 def render_share_metadata():
+    """Insere metadados Open Graph e Twitter para compartilhamento da página."""
     st.markdown(
         f"""
         <meta property="og:type" content="website">
@@ -52,6 +62,7 @@ def render_share_metadata():
 
 
 def render_print_button():
+    """Renderiza botão isolado que solicita impressão da janela principal."""
     markup = """
         <style>
             body { margin: 0; background: transparent; }
@@ -81,8 +92,20 @@ def render_print_button():
     st.html(markup, unsafe_allow_javascript=True)
 
 
-def render_resultado(vazamentos, analytics):
+def render_resultado(vazamentos, analytics, status_api=None):
+    """Renderiza sucesso, ausência de vazamentos ou falhas classificadas."""
     if vazamentos is None:
+        if status_api == "cooldown":
+            st.warning(
+                "⏳ A API recebeu pesquisas muito próximas e solicitou um cooldown. "
+                "Aguarde antes de tentar novamente."
+            )
+            return
+        if status_api == "expired":
+            st.error(
+                "⚠️ A API de vazamentos informou que a configuração de acesso expirou."
+            )
+            return
         st.error(
             "⚠️ Não foi possível consultar a API de vazamentos neste momento. "
             "O serviço pode estar temporariamente indisponível ou com a chave expirada."
@@ -151,6 +174,7 @@ def render_resultado(vazamentos, analytics):
 
 
 def main():
+    """Inicializa o Streamlit e executa o ciclo principal da aplicação."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -158,9 +182,11 @@ def main():
     st.set_page_config(page_title=APP_TITLE, page_icon=APP_ICON, layout="wide")
     render_share_metadata()
     st.markdown(CSS, unsafe_allow_html=True)
+    # A sessão preserva o relatório entre reruns provocados por widgets.
     if "resultado_vazamentos" not in st.session_state:
         st.session_state.resultado_vazamentos = None
         st.session_state.resultado_analytics = None
+        st.session_state.status_api = None
         st.session_state.consulta_realizada = False
         registrar_acesso()
 
@@ -182,6 +208,8 @@ def main():
             key="clear-search",
             on_click=limpar_busca,
         )
+    # A consulta só começa após validação superficial; a API continua sendo a
+    # autoridade para determinar se o endereço existe em sua base.
     if verificar:
         if not email or "@" not in email:
             st.warning("Informe um endereço de e-mail válido.")
@@ -190,16 +218,20 @@ def main():
             loading = render_loading()
             preencher_loading(loading)
             time.sleep(1)
+            # As consultas são separadas para distinguir falha básica de falha
+            # parcial no relatório detalhado.
             vazamentos = buscar_vazamentos(email)
+            status_api = obter_status_api()
             analytics = buscar_analytics(email) if vazamentos else None
             detalhes = analytics.get("ExposedBreaches", {}).get("breaches_details", []) if analytics else []
             registrar_busca(vazamentos, detalhes, analytics)
             st.session_state.resultado_vazamentos = vazamentos
             st.session_state.resultado_analytics = analytics
+            st.session_state.status_api = status_api
             st.session_state.consulta_realizada = True
             iniciar_busca_traducao()
             inicio_render = time.monotonic()
-            render_resultado(vazamentos, analytics)
+            render_resultado(vazamentos, analytics, status_api)
             registrar_renderizacao(round((time.monotonic() - inicio_render) * 1000))
             loading.empty()
     elif st.session_state.consulta_realizada:
@@ -207,6 +239,7 @@ def main():
         render_resultado(
             st.session_state.resultado_vazamentos,
             st.session_state.resultado_analytics,
+            st.session_state.status_api,
         )
         registrar_renderizacao(round((time.monotonic() - inicio_render) * 1000))
     render_footer()

@@ -1,4 +1,9 @@
-"""Integrações externas da aplicação."""
+"""Integrações externas, persistência e telemetria da aplicação.
+
+O módulo separa a comunicação com a XposedOrNot, o armazenamento SQLite e a
+coleta de métricas operacionais. Nenhuma consulta grava o e-mail, IP,
+User-Agent ou a URL completa usada pelo usuário.
+"""
 
 import logging
 import sqlite3
@@ -12,7 +17,14 @@ from urllib.parse import quote
 from src.config import API_BASE_URL, METRICS_DB_PATH
 
 LOGGER = logging.getLogger(__name__)
+# Locks protegem contadores e o último estado da API em eventuais execuções
+# concorrentes do servidor Streamlit.
 _STATS_LOCK = Lock()
+_API_STATUS_LOCK = Lock()
+_LAST_API_STATUS = None
+_LAST_SEARCH_AT = None
+# Os nomes abaixo formam o contrato entre memória, SQLite e o resumo do log.
+# Métricas novas devem ser adicionadas também à inicialização e ao SELECT total.
 _STATS = {
     "accesses": 0,
     "searches": 0,
@@ -47,12 +59,31 @@ _STATS = {
     "weak_hash_incidents": 0,
     "strong_hash_incidents": 0,
     "reports_with_api_degradation": 0,
+    "api_expired_responses": 0,
+    "api_cooldown_responses": 0,
+    "api_failures": 0,
+    "api_invalid_responses": 0,
+    "api_incomplete_responses": 0,
+    "api_timeouts": 0,
+    "api_2xx_responses": 0,
+    "api_4xx_responses": 0,
+    "api_5xx_responses": 0,
+    "search_interval_ms_sum": 0,
+    "search_interval_count": 0,
+    "large_exposure_searches": 0,
+    "medium_exposure_searches": 0,
+    "small_exposure_searches": 0,
+    "database_write_errors": 0,
+    "searches_cleared": 0,
 }
 
 
 def _inicializar_metricas():
+    """Cria tabelas e aplica migrações compatíveis com bancos existentes."""
     METRICS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(METRICS_DB_PATH) as connection:
+        # A tabela diária acelera relatórios históricos sem eliminar o histórico
+        # individual mantido em ``metric_events``.
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS daily_metrics (
@@ -90,9 +121,27 @@ def _inicializar_metricas():
                 weak_hash_incidents INTEGER NOT NULL DEFAULT 0,
                 strong_hash_incidents INTEGER NOT NULL DEFAULT 0,
                 reports_with_api_degradation INTEGER NOT NULL DEFAULT 0
+                ,api_expired_responses INTEGER NOT NULL DEFAULT 0
+                ,api_cooldown_responses INTEGER NOT NULL DEFAULT 0
+                ,api_failures INTEGER NOT NULL DEFAULT 0
+                ,api_invalid_responses INTEGER NOT NULL DEFAULT 0
+                ,api_incomplete_responses INTEGER NOT NULL DEFAULT 0
+                ,api_timeouts INTEGER NOT NULL DEFAULT 0
+                ,api_2xx_responses INTEGER NOT NULL DEFAULT 0
+                ,api_4xx_responses INTEGER NOT NULL DEFAULT 0
+                ,api_5xx_responses INTEGER NOT NULL DEFAULT 0
+                ,search_interval_ms_sum REAL NOT NULL DEFAULT 0
+                ,search_interval_count INTEGER NOT NULL DEFAULT 0
+                ,large_exposure_searches INTEGER NOT NULL DEFAULT 0
+                ,medium_exposure_searches INTEGER NOT NULL DEFAULT 0
+                ,small_exposure_searches INTEGER NOT NULL DEFAULT 0
+                ,database_write_errors INTEGER NOT NULL DEFAULT 0
+                ,searches_cleared INTEGER NOT NULL DEFAULT 0
             )
             """
         )
+        # ALTER TABLE é aplicado somente quando a coluna ainda não existe, o que
+        # permite atualizar instalações antigas sem apagar dados.
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(daily_metrics)")
@@ -126,9 +175,26 @@ def _inicializar_metricas():
             "weak_hash_incidents": "INTEGER NOT NULL DEFAULT 0",
             "strong_hash_incidents": "INTEGER NOT NULL DEFAULT 0",
             "reports_with_api_degradation": "INTEGER NOT NULL DEFAULT 0",
+            "api_expired_responses": "INTEGER NOT NULL DEFAULT 0",
+            "api_cooldown_responses": "INTEGER NOT NULL DEFAULT 0",
+            "api_failures": "INTEGER NOT NULL DEFAULT 0",
+            "api_invalid_responses": "INTEGER NOT NULL DEFAULT 0",
+            "api_incomplete_responses": "INTEGER NOT NULL DEFAULT 0",
+            "api_timeouts": "INTEGER NOT NULL DEFAULT 0",
+            "api_2xx_responses": "INTEGER NOT NULL DEFAULT 0",
+            "api_4xx_responses": "INTEGER NOT NULL DEFAULT 0",
+            "api_5xx_responses": "INTEGER NOT NULL DEFAULT 0",
+            "search_interval_ms_sum": "REAL NOT NULL DEFAULT 0",
+            "search_interval_count": "INTEGER NOT NULL DEFAULT 0",
+            "large_exposure_searches": "INTEGER NOT NULL DEFAULT 0",
+            "medium_exposure_searches": "INTEGER NOT NULL DEFAULT 0",
+            "small_exposure_searches": "INTEGER NOT NULL DEFAULT 0",
+            "database_write_errors": "INTEGER NOT NULL DEFAULT 0",
+            "searches_cleared": "INTEGER NOT NULL DEFAULT 0",
         }
         for coluna, definicao in additions.items():
             if coluna not in columns:
+                # Rankings agregados mantêm ocorrências e datas sem armazenar a consulta.
                 connection.execute(
                     f"ALTER TABLE daily_metrics ADD COLUMN {coluna} {definicao}"
                 )
@@ -159,6 +225,29 @@ def _inicializar_metricas():
                 duration_ms INTEGER NOT NULL,
                 success INTEGER NOT NULL,
                 error_type TEXT
+                ,response_size_bytes INTEGER
+                ,response_valid INTEGER
+            )
+            """
+        )
+        api_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(api_events)")
+        }
+        for coluna, definicao in {
+            "response_size_bytes": "INTEGER",
+            "response_valid": "INTEGER",
+        }.items():
+            if coluna not in api_columns:
+                connection.execute(
+                    f"ALTER TABLE api_events ADD COLUMN {coluna} {definicao}"
+                )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS metric_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_time TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                quantity REAL NOT NULL
             )
             """
         )
@@ -197,6 +286,7 @@ def _inicializar_metricas():
 
 
 def _atualizar_metricas(**incrementos):
+    """Persiste incrementos, eventos individuais e totais consolidados."""
     _inicializar_metricas()
     hoje = date.today().isoformat()
     with sqlite3.connect(METRICS_DB_PATH) as connection:
@@ -207,12 +297,26 @@ def _atualizar_metricas(**incrementos):
             """,
             (hoje,),
         )
+        # Cada incremento gera um evento próprio com timestamp. Os agregados
+        # continuam sendo atualizados para consultas de resumo mais rápidas.
         for coluna, valor in incrementos.items():
             if valor:
                 connection.execute(
                     f"UPDATE daily_metrics SET {coluna} = {coluna} + ? WHERE metric_date = ?",
                     (valor, hoje),
                 )
+                connection.execute(
+                    """
+                    INSERT INTO metric_events (event_time, metric_name, quantity)
+                    VALUES (?, ?, ?)
+                    """,
+                    (
+                        datetime.now().isoformat(timespec="milliseconds"),
+                        coluna,
+                        valor,
+                    ),
+                )
+        # A dimensão horária permite analisar concentração de uso por horário.
         hora = datetime.now().hour
         connection.execute(
             """
@@ -267,22 +371,68 @@ def _atualizar_metricas(**incrementos):
                    COALESCE(SUM(weak_hash_incidents), 0),
                    COALESCE(SUM(strong_hash_incidents), 0),
                    COALESCE(SUM(reports_with_api_degradation), 0)
+                   ,COALESCE(SUM(api_expired_responses), 0)
+                   ,COALESCE(SUM(api_cooldown_responses), 0)
+                   ,COALESCE(SUM(api_failures), 0)
+                   ,COALESCE(SUM(api_invalid_responses), 0)
+                   ,COALESCE(SUM(api_incomplete_responses), 0)
+                   ,COALESCE(SUM(api_timeouts), 0)
+                   ,COALESCE(SUM(api_2xx_responses), 0)
+                   ,COALESCE(SUM(api_4xx_responses), 0)
+                   ,COALESCE(SUM(api_5xx_responses), 0)
+                   ,COALESCE(SUM(search_interval_ms_sum), 0)
+                   ,COALESCE(SUM(search_interval_count), 0)
+                   ,COALESCE(SUM(large_exposure_searches), 0)
+                   ,COALESCE(SUM(medium_exposure_searches), 0)
+                   ,COALESCE(SUM(small_exposure_searches), 0)
+                   ,COALESCE(SUM(database_write_errors), 0)
+                   ,COALESCE(SUM(searches_cleared), 0)
             FROM daily_metrics
             """
         ).fetchone()
     return dict(zip(_STATS, totais))
 
 
-def registrar_evento_api(endpoint, status_code, inicio, error_type=None):
-    """Persiste telemetria técnica da API, sem dados da consulta."""
+def registrar_evento_api(
+    endpoint,
+    status_code,
+    inicio,
+    error_type=None,
+    response_size_bytes=None,
+    response_valid=None,
+):
+    """Persiste uma chamada externa com status, latência e validade.
+
+    O conteúdo da resposta nunca é persistido; somente tamanho e classificação
+    técnica são armazenados para diagnóstico.
+    """
     _inicializar_metricas()
     duracao_ms = round((time.monotonic() - inicio) * 1000)
+    if (
+        endpoint in ("check-email", "breach-analytics")
+        and (status_code != 200 or error_type is not None)
+    ):
+        registrar_telemetria("api_failures")
+    if status_code is not None:
+        if 200 <= status_code < 300:
+            registrar_telemetria("api_2xx_responses")
+        elif 400 <= status_code < 500:
+            registrar_telemetria("api_4xx_responses")
+        elif 500 <= status_code < 600:
+            registrar_telemetria("api_5xx_responses")
+    if error_type in ("Timeout", "ConnectTimeout", "ReadTimeout"):
+        registrar_telemetria("api_timeouts")
+    if response_valid is False:
+        registrar_telemetria("api_invalid_responses")
+    if error_type == "incomplete_response":
+        registrar_telemetria("api_incomplete_responses")
     with sqlite3.connect(METRICS_DB_PATH) as connection:
         connection.execute(
             """
             INSERT INTO api_events
-                (event_time, endpoint, status_code, duration_ms, success, error_type)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (event_time, endpoint, status_code, duration_ms, success, error_type,
+                 response_size_bytes, response_valid)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 datetime.now().isoformat(timespec="seconds"),
@@ -291,12 +441,53 @@ def registrar_evento_api(endpoint, status_code, inicio, error_type=None):
                 duracao_ms,
                 int(status_code == 200 and error_type is None),
                 error_type,
+                response_size_bytes,
+                response_valid,
             ),
         )
 
 
+def _classificar_status_api(response):
+    """Classifica apenas estados explicitamente informados pela API.
+
+    Não transforma todo HTTP 429 em cooldown: essa mensagem só é usada quando
+    o corpo retornado contém o termo correspondente.
+    """
+    try:
+        corpo = response.text.lower()
+    except (AttributeError, TypeError):
+        return None
+    if "cooldown" in corpo:
+        return "cooldown"
+    if (
+        "expired" in corpo
+        and any(termo in corpo for termo in ("api", "key", "token", "subscription"))
+    ):
+        return "expired"
+    return None
+
+
+def _registrar_status_api(response):
+    """Atualiza o último estado explícito e seus contadores."""
+    status = _classificar_status_api(response)
+    global _LAST_API_STATUS
+    with _API_STATUS_LOCK:
+        _LAST_API_STATUS = status
+    if status == "expired":
+        registrar_telemetria("api_expired_responses")
+    elif status == "cooldown":
+        registrar_telemetria("api_cooldown_responses")
+    return status
+
+
+def obter_status_api():
+    """Retorna o último estado explícito informado pela API de consulta."""
+    with _API_STATUS_LOCK:
+        return _LAST_API_STATUS
+
+
 def registrar_telemetria(nome, quantidade=1):
-    """Registra métricas internas agregadas, sem identificadores pessoais."""
+    """Registra um incremento nomeado e cria seu evento com timestamp."""
     if nome not in _STATS or not quantidade:
         return
     with _STATS_LOCK:
@@ -305,7 +496,7 @@ def registrar_telemetria(nome, quantidade=1):
 
 
 def registrar_acesso():
-    """Registra um acesso à aplicação e exibe o contador no terminal."""
+    """Registra acesso, persiste o evento e exibe o contador no terminal."""
     with _STATS_LOCK:
         _STATS["accesses"] += 1
         metricas = _atualizar_metricas(accesses=1)
@@ -318,7 +509,17 @@ def registrar_acesso():
 
 
 def registrar_busca(resultado, detalhes=None, analytics=None):
-    """Atualiza as métricas de busca sem registrar dados pessoais."""
+    """Atualiza métricas derivadas de uma busca sem registrar dados pessoais.
+
+    Os dados recebidos são reduzidos a contagens, categorias e nomes públicos de
+    sites. O intervalo entre buscas usa apenas relógio monotônico em memória.
+    """
+    global _LAST_SEARCH_AT
+    agora_monotonic = time.monotonic()
+    intervalo_ms = None
+    if _LAST_SEARCH_AT is not None:
+        intervalo_ms = round((agora_monotonic - _LAST_SEARCH_AT) * 1000)
+    _LAST_SEARCH_AT = agora_monotonic
     detalhes = detalhes or []
     sites = {
         str(item.get("breach", "")).strip()
@@ -386,6 +587,14 @@ def registrar_busca(resultado, detalhes=None, analytics=None):
         for item in detalhes
         if isinstance(item, dict) and str(item.get("xposed_records", "")).isdigit()
     )
+    # As faixas tornam a distribuição de impacto consultável sem guardar cada
+    # registro individual retornado pela API.
+    if registros >= 1_000_000:
+        faixa_exposicao = "large_exposure_searches"
+    elif registros >= 10_000:
+        faixa_exposicao = "medium_exposure_searches"
+    else:
+        faixa_exposicao = "small_exposure_searches"
     campos_ausentes = {
         "reports_with_missing_description": int(
             any(not str(item.get("description", "")).strip() for item in detalhes if isinstance(item, dict))
@@ -429,8 +638,12 @@ def registrar_busca(resultado, detalhes=None, analytics=None):
         "weak_hash_incidents": hashes_fracos,
         "strong_hash_incidents": hashes_fortes,
         "reports_with_api_degradation": int(analytics is None and bool(resultado)),
+        faixa_exposicao: int(bool(resultado)),
         **campos_ausentes,
     }
+    if intervalo_ms is not None:
+        incrementos["search_interval_ms_sum"] = intervalo_ms
+        incrementos["search_interval_count"] = 1
     with _STATS_LOCK:
         _STATS["searches"] += 1
         if resultado is None:
@@ -469,7 +682,7 @@ def registrar_busca(resultado, detalhes=None, analytics=None):
                         (valor, hoje),
                     )
     LOGGER.info(
-        "\n%s\n🔎 RESUMO DAS BUSCAS\n   Acessos: %s\n   Buscas totais: %s\n   ✅ Positivas: %s\n   ⚪ Negativas: %s\n   ❌ Falhas: %s\n   🌐 Sites afetados: %s\n   ✔️ Incidentes confirmados: %s\n   🔓 Incidentes com senha em texto puro: %s\n   🔑 Incidentes com senha exposta: %s\n   🧩 Tipos de dados: %s\n   🏢 Setores afetados: %s\n   ⚠️ Risco: baixo %s | médio %s | alto %s | crítico %s\n   📊 Registros afetados: %s\n   🧪 Hashes fracos: %s | fortes: %s\n   🌐 Respostas degradadas da API: %s\n   🌍 Traduções: %s solicitações | %s sucesso | %s fallback | %s erros\n%s",
+        "\n%s\n🔎 RESUMO DAS BUSCAS\n   Acessos: %s\n   Buscas totais: %s\n   ✅ Positivas: %s\n   ⚪ Negativas: %s\n   ❌ Falhas: %s\n   🌐 Sites afetados: %s\n   ✔️ Incidentes confirmados: %s\n   🔓 Incidentes com senha em texto puro: %s\n   🔑 Incidentes com senha exposta: %s\n   🧩 Tipos de dados: %s\n   🏢 Setores afetados: %s\n   ⚠️ Risco: baixo %s | médio %s | alto %s | crítico %s\n   📊 Registros afetados: %s\n   🧪 Hashes fracos: %s | fortes: %s\n   🌐 Respostas degradadas da API: %s\n   ⏳ API expirada: %s | cooldown: %s | problemas: %s\n   📡 HTTP: 2xx %s | 4xx %s | 5xx %s | inválidas %s | incompletas %s | timeouts %s\n   ⏱️ Intervalo médio entre buscas: %s ms\n   📦 Exposição: pequena %s | média %s | grande %s\n   🌍 Traduções: %s solicitações | %s sucesso | %s fallback | %s erros\n   🧹 Buscas limpas: %s\n%s",
         "-" * 56,
         metricas["accesses"],
         metricas["searches"],
@@ -490,22 +703,41 @@ def registrar_busca(resultado, detalhes=None, analytics=None):
         metricas["weak_hash_incidents"],
         metricas["strong_hash_incidents"],
         metricas["reports_with_api_degradation"],
+        metricas["api_expired_responses"],
+        metricas["api_cooldown_responses"],
+        metricas["api_failures"],
+        metricas["api_2xx_responses"],
+        metricas["api_4xx_responses"],
+        metricas["api_5xx_responses"],
+        metricas["api_invalid_responses"],
+        metricas["api_incomplete_responses"],
+        metricas["api_timeouts"],
+        round(
+            metricas["search_interval_ms_sum"] / metricas["search_interval_count"]
+        )
+        if metricas["search_interval_count"]
+        else 0,
+        metricas["small_exposure_searches"],
+        metricas["medium_exposure_searches"],
+        metricas["large_exposure_searches"],
         metricas["translation_requests"],
         metricas["translation_successes"],
         metricas["translation_fallbacks"],
         metricas["translation_errors"],
+        metricas["searches_cleared"],
         "-" * 56,
     )
 
 
 def registrar_renderizacao(duracao_ms):
+    """Registra uma renderização e sua duração em milissegundos."""
     registrar_telemetria("rendered_reports")
     registrar_telemetria("render_duration_ms_sum", duracao_ms)
     registrar_telemetria("render_duration_count")
 
 
 def buscar_vazamentos(email):
-    """Consulta os vazamentos associados ao e-mail."""
+    """Consulta o endpoint básico de vazamentos e valida sua estrutura."""
     inicio = time.monotonic()
     LOGGER.info("Consulta de vazamentos iniciada")
     try:
@@ -513,13 +745,22 @@ def buscar_vazamentos(email):
             f"{API_BASE_URL}/v1/check-email/{quote(email)}",
             timeout=20,
         )
-        registrar_evento_api(
-            "check-email",
-            response.status_code,
-            inicio,
-            None if response.status_code == 200 else "http_error",
-        )
+        status_api = _registrar_status_api(response)
+        try:
+            response_size = len(response.content)
+        except (AttributeError, TypeError):
+            response_size = None
+        # Status não bem-sucedido encerra a consulta sem interpretar conteúdo
+        # potencialmente incompleto ou incompatível.
         if response.status_code != 200:
+            registrar_evento_api(
+                "check-email",
+                response.status_code,
+                inicio,
+                status_api or "http_error",
+                response_size,
+                False,
+            )
             LOGGER.error(
                 "Consulta de vazamentos falhou: status HTTP %s (%.2fs)",
                 response.status_code,
@@ -527,7 +768,28 @@ def buscar_vazamentos(email):
             )
             return None
 
-        breaches = response.json().get("breaches", [[]])
+        # A chave ``breaches`` é necessária para diferenciar resposta vazia de
+        # resposta inválida.
+        payload = response.json()
+        if not isinstance(payload, dict) or "breaches" not in payload:
+            registrar_evento_api(
+                "check-email",
+                response.status_code,
+                inicio,
+                "incomplete_response",
+                response_size,
+                False,
+            )
+            return None
+        registrar_evento_api(
+            "check-email",
+            response.status_code,
+            inicio,
+            status_api,
+            response_size,
+            True,
+        )
+        breaches = payload.get("breaches", [[]])
         resultado = breaches[0] if isinstance(breaches, list) and breaches else breaches
         LOGGER.info(
             "Consulta de vazamentos concluída: %s encontrado(s) (%.2fs)",
@@ -546,7 +808,7 @@ def buscar_vazamentos(email):
 
 
 def buscar_analytics(email):
-    """Consulta o relatório detalhado de risco do e-mail."""
+    """Consulta e valida o relatório detalhado de risco do e-mail."""
     inicio = time.monotonic()
     LOGGER.info("Consulta de analytics iniciada")
     try:
@@ -554,20 +816,45 @@ def buscar_analytics(email):
             f"{API_BASE_URL}/v1/breach-analytics?email={quote(email)}",
             timeout=20,
         )
-        registrar_evento_api(
-            "breach-analytics",
-            response.status_code,
-            inicio,
-            None if response.status_code == 200 else "http_error",
-        )
+        status_api = _registrar_status_api(response)
+        try:
+            response_size = len(response.content)
+        except (AttributeError, TypeError):
+            response_size = None
         if response.status_code != 200:
+            registrar_evento_api(
+                "breach-analytics",
+                response.status_code,
+                inicio,
+                status_api or "http_error",
+                response_size,
+                False,
+            )
             LOGGER.error(
                 "Consulta de analytics falhou: status HTTP %s (%.2fs)",
                 response.status_code,
                 time.monotonic() - inicio,
             )
             return None
+        registrar_evento_api(
+            "breach-analytics",
+            response.status_code,
+            inicio,
+            status_api,
+            response_size,
+            True,
+        )
         resultado = response.json()
+        if not isinstance(resultado, dict):
+            registrar_evento_api(
+                "breach-analytics",
+                response.status_code,
+                inicio,
+                "incomplete_response",
+                response_size,
+                False,
+            )
+            return None
         LOGGER.info("Consulta de analytics concluída (%.2fs)", time.monotonic() - inicio)
         return resultado
     except (requests.exceptions.RequestException, ValueError, TypeError) as error:
