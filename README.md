@@ -44,11 +44,13 @@ vazou-meus-dados/
 ├── README.md
 ├── requirements.txt
 └── src/
+    ├── __init__.py
     ├── components.py
     ├── config.py
     ├── main.py
     ├── services.py
-    └── styles.py
+    ├── styles.py
+    └── translator.py
 ```
 
 O projeto usa uma estrutura simples por responsabilidade: `services.py` concentra
