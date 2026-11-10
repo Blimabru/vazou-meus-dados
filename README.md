@@ -1,11 +1,11 @@
-﻿# 🚨 VazouMeusDados
+﻿# 🚨 Vazou Meus Dados
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-O **VazouMeusDados** é um painel web interativo e de código aberto voltado para a conscientização em segurança cibernética. Ele permite que qualquer pessoa verifique rapidamente se o seu endereço de e-mail foi exposto em incidentes públicos de vazamento de dados, oferecendo um diagnóstico claro sobre o nível de risco e planos de ação práticos.
+O **Vazou Meus Dados** é um painel web interativo e de código aberto voltado para a conscientização em segurança cibernética. Ele permite que qualquer pessoa verifique rapidamente se o seu endereço de e-mail foi exposto em incidentes públicos de vazamento de dados, oferecendo um diagnóstico claro sobre o nível de risco e planos de ação práticos.
 
 ---
 
@@ -38,10 +38,23 @@ Você pode rodar o projeto localmente no seu computador para desenvolvimento ou 
 vazou-meus-dados/
 ├── .gitignore
 ├── app.py
+├── assets/
+│   └── logo.png
 ├── docker-compose.yml
 ├── README.md
-└── requirements.txt
+├── requirements.txt
+└── src/
+    ├── components.py
+    ├── config.py
+    ├── main.py
+    ├── services.py
+    └── styles.py
 ```
+
+O projeto usa uma estrutura simples por responsabilidade: `services.py` concentra
+a integração com a API, `components.py` concentra os componentes da interface,
+`styles.py` reúne o visual e `main.py` orquestra o fluxo da aplicação. O arquivo
+`app.py` permanece apenas como ponto de entrada do Streamlit.
 
 ### Opção 1: Execução Local com Ambiente Virtual
 
@@ -91,7 +104,7 @@ Ideal para infraestruturas utilizando Portainer ou gerenciadores de stacks. O ar
 
 ```yaml
 # ==============================================================================
-# Stack: VazouMeusDados - Plataforma de Conscientização e Segurança
+# Stack: Vazou Meus Dados - Plataforma de Conscientização e Segurança
 # Descrição: Orquestração do contêiner da aplicação web Python (Streamlit).
 #            Configurado para provisionamento ágil, persistência de código-fonte
 #            via bind mount e exposição de porta para acoplamento com proxies
