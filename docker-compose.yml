@@ -4,6 +4,13 @@
 #            Configurado para provisionamento ágil, persistência de código-fonte
 #            via bind mount e exposição de porta para acoplamento com proxies
 #            reversos externos (como NGINX UI, Traefik ou Apache).
+#
+# Variáveis para Portainer ou arquivo .env:
+#   HOST_IP=127.0.0.1
+#   HOST_PORT=8501
+#   APP_VOLUME=.
+#
+# A porta interna do contêiner é fixa em 8080 e não precisa ser informada.
 # ==============================================================================
 
 services:
