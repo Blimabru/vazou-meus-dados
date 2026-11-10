@@ -2,6 +2,7 @@
 
 import html
 import logging
+import time
 from threading import Lock
 
 import requests
@@ -46,6 +47,16 @@ def traduzir_texto(texto, idioma_origem="en", idioma_destino="pt-BR"):
         return texto_original
 
     fallback = FALLBACK_TRANSLATIONS.get(texto.lower(), texto_original)
+    def registrar_fallback(rate_limited=False):
+        from src.services import registrar_telemetria
+
+        registrar_telemetria("translation_fallbacks")
+        if rate_limited:
+            registrar_telemetria("translation_rate_limits")
+
+    from src.services import registrar_evento_api, registrar_telemetria
+    inicio = time.monotonic()
+    registrar_telemetria("translation_requests")
     try:
         response = requests.get(
             TRANSLATION_URL,
@@ -65,10 +76,22 @@ def traduzir_texto(texto, idioma_origem="en", idioma_destino="pt-BR"):
                     "API de tradução indisponível nesta busca: "
                     "limite de requisições atingido (HTTP 429)"
                 )
+            registrar_fallback(rate_limited=True)
+            registrar_evento_api("translation", response.status_code, inicio, "rate_limit")
             return fallback
         response.raise_for_status()
         translated = response.json().get("responseData", {}).get("translatedText")
-        return html.unescape(translated).strip() if translated else fallback
+        if translated:
+            registrar_telemetria("translation_successes")
+            registrar_evento_api("translation", response.status_code, inicio)
+            return html.unescape(translated).strip()
+        registrar_telemetria("translation_errors")
+        registrar_evento_api("translation", response.status_code, inicio, "invalid_response")
+        return fallback
     except (requests.RequestException, ValueError, AttributeError) as error:
+        registrar_fallback()
+        registrar_telemetria("translation_errors")
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+        registrar_evento_api("translation", status_code, inicio, type(error).__name__)
         LOGGER.warning("Não foi possível traduzir o texto retornado pela API: %s", error)
         return fallback
