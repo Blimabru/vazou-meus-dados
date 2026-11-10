@@ -1,5 +1,5 @@
 # ==============================================================================
-# Stack: VazouMeusDados - Plataforma de Conscientização e Segurança
+# Stack: Vazou Meus Dados - Plataforma de Conscientização e Segurança
 # Descrição: Orquestração do contêiner da aplicação web Python (Streamlit).
 #            Configurado para provisionamento ágil, persistência de código-fonte
 #            via bind mount e exposição de porta para acoplamento com proxies
@@ -41,11 +41,11 @@ services:
     # ── 3. Topologia de Rede e Exposição ──────────────────────────────────────
     
     ports:
-      # Mapeamento [Porta_do_Host]:[Porta_do_Contêiner].
+      # Mapeamento [IP_do_Host]:[Porta_do_Host]:[Porta_do_Contêiner].
       # Expõe o serviço nativamente no Host para que balanceadores de carga ou
       # proxies reversos localizados em outras sub-redes/VMs possam rotear
       # o tráfego HTTP/WebSocket adequadamente.
-      - "8501:8501"
+      - "localhost:8501:8501"
       
     # ── 4. Gerenciamento de Volumes e Persistência ────────────────────────────
     
