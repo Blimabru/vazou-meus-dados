@@ -14,7 +14,13 @@ from src.components import (
     render_loading,
 )
 from src.config import APP_ICON, APP_TITLE, PUBLIC_URL, SHARE_DESCRIPTION, SHARE_IMAGE_URL
-from src.services import buscar_analytics, buscar_vazamentos, registrar_acesso, registrar_busca
+from src.services import (
+    buscar_analytics,
+    buscar_vazamentos,
+    registrar_acesso,
+    registrar_busca,
+    registrar_renderizacao,
+)
 from src.styles import CSS
 from src.translator import iniciar_busca_traducao
 
@@ -185,17 +191,22 @@ def main():
             preencher_loading(loading)
             time.sleep(1)
             vazamentos = buscar_vazamentos(email)
-            registrar_busca(vazamentos)
             analytics = buscar_analytics(email) if vazamentos else None
+            detalhes = analytics.get("ExposedBreaches", {}).get("breaches_details", []) if analytics else []
+            registrar_busca(vazamentos, detalhes, analytics)
             st.session_state.resultado_vazamentos = vazamentos
             st.session_state.resultado_analytics = analytics
             st.session_state.consulta_realizada = True
             iniciar_busca_traducao()
+            inicio_render = time.monotonic()
             render_resultado(vazamentos, analytics)
+            registrar_renderizacao(round((time.monotonic() - inicio_render) * 1000))
             loading.empty()
     elif st.session_state.consulta_realizada:
+        inicio_render = time.monotonic()
         render_resultado(
             st.session_state.resultado_vazamentos,
             st.session_state.resultado_analytics,
         )
+        registrar_renderizacao(round((time.monotonic() - inicio_render) * 1000))
     render_footer()
