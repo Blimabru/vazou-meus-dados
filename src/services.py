@@ -408,9 +408,12 @@ def registrar_evento_api(
     """
     _inicializar_metricas()
     duracao_ms = round((time.monotonic() - inicio) * 1000)
+    sucesso_not_found = (
+        status_code == 404 and response_valid is True and error_type is None
+    )
     if (
         endpoint in ("check-email", "breach-analytics")
-        and (status_code != 200 or error_type is not None)
+        and ((status_code != 200 and not sucesso_not_found) or error_type is not None)
     ):
         registrar_telemetria("api_failures")
     if status_code is not None:
@@ -439,7 +442,7 @@ def registrar_evento_api(
                 endpoint,
                 status_code,
                 duracao_ms,
-                int(status_code == 200 and error_type is None),
+                int((status_code == 200 or sucesso_not_found) and error_type is None),
                 error_type,
                 response_size_bytes,
                 response_valid,
@@ -574,7 +577,8 @@ def registrar_busca(resultado, detalhes=None, analytics=None):
         for item in detalhes
         if isinstance(item, dict) and str(item.get("industry", "")).strip()
     }
-    risco = analytics.get("BreachMetrics", {}).get("risk", []) if analytics else []
+    breach_metrics = analytics.get("BreachMetrics") if isinstance(analytics, dict) else None
+    risco = breach_metrics.get("risk", []) if isinstance(breach_metrics, dict) else []
     risco = risco[0] if isinstance(risco, list) and risco else risco
     score = risco.get("risk_score") if isinstance(risco, dict) else None
     try:
@@ -736,13 +740,21 @@ def registrar_renderizacao(duracao_ms):
     registrar_telemetria("render_duration_count")
 
 
+def _eh_resposta_sem_vazamentos(payload):
+    """Identifica a resposta padrão da XposedOrNot quando não há vazamentos."""
+    if not isinstance(payload, dict):
+        return False
+    erro = str(payload.get("Error", payload.get("error", ""))).strip().lower()
+    return erro == "not found"
+
+
 def buscar_vazamentos(email):
     """Consulta o endpoint básico de vazamentos e valida sua estrutura."""
     inicio = time.monotonic()
     LOGGER.info("Consulta de vazamentos iniciada")
     try:
         response = requests.get(
-            f"{API_BASE_URL}/v1/check-email/{quote(email)}",
+            f"{API_BASE_URL}/v1/check-email/{quote(email, safe='')}",
             timeout=20,
         )
         status_api = _registrar_status_api(response)
@@ -750,6 +762,27 @@ def buscar_vazamentos(email):
             response_size = len(response.content)
         except (AttributeError, TypeError):
             response_size = None
+
+        if response.status_code == 404:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = None
+            if status_api is None and _eh_resposta_sem_vazamentos(payload):
+                registrar_evento_api(
+                    "check-email",
+                    response.status_code,
+                    inicio,
+                    None,
+                    response_size,
+                    True,
+                )
+                LOGGER.info(
+                    "Consulta de vazamentos concluída: 0 encontrado(s) (%.2fs)",
+                    time.monotonic() - inicio,
+                )
+                return []
+
         # Status não bem-sucedido encerra a consulta sem interpretar conteúdo
         # potencialmente incompleto ou incompatível.
         if response.status_code != 200:
@@ -768,9 +801,26 @@ def buscar_vazamentos(email):
             )
             return None
 
-        # A chave ``breaches`` é necessária para diferenciar resposta vazia de
-        # resposta inválida.
         payload = response.json()
+        # Quando o e-mail não consta na base, a XposedOrNot retorna HTTP 200
+        # com ``{"Error": "Not found", "email": null}`` e sem a chave ``breaches``.
+        if status_api is None and _eh_resposta_sem_vazamentos(payload):
+            registrar_evento_api(
+                "check-email",
+                response.status_code,
+                inicio,
+                None,
+                response_size,
+                True,
+            )
+            LOGGER.info(
+                "Consulta de vazamentos concluída: 0 encontrado(s) (%.2fs)",
+                time.monotonic() - inicio,
+            )
+            return []
+
+        # A chave ``breaches`` é necessária nos demais casos para diferenciar
+        # resposta vazia de resposta inválida.
         if not isinstance(payload, dict) or "breaches" not in payload:
             registrar_evento_api(
                 "check-email",
@@ -781,6 +831,36 @@ def buscar_vazamentos(email):
                 False,
             )
             return None
+
+        breaches = payload.get("breaches", [[]])
+        if isinstance(breaches, list):
+            if not breaches:
+                resultado = []
+            elif isinstance(breaches[0], list):
+                resultado = breaches[0]
+            elif all(isinstance(item, str) for item in breaches):
+                resultado = breaches
+            else:
+                registrar_evento_api(
+                    "check-email",
+                    response.status_code,
+                    inicio,
+                    "incomplete_response",
+                    response_size,
+                    False,
+                )
+                return None
+        else:
+            registrar_evento_api(
+                "check-email",
+                response.status_code,
+                inicio,
+                "incomplete_response",
+                response_size,
+                False,
+            )
+            return None
+
         registrar_evento_api(
             "check-email",
             response.status_code,
@@ -789,11 +869,9 @@ def buscar_vazamentos(email):
             response_size,
             True,
         )
-        breaches = payload.get("breaches", [[]])
-        resultado = breaches[0] if isinstance(breaches, list) and breaches else breaches
         LOGGER.info(
             "Consulta de vazamentos concluída: %s encontrado(s) (%.2fs)",
-            len(resultado) if isinstance(resultado, list) else 0,
+            len(resultado),
             time.monotonic() - inicio,
         )
         return resultado
@@ -813,7 +891,7 @@ def buscar_analytics(email):
     LOGGER.info("Consulta de analytics iniciada")
     try:
         response = requests.get(
-            f"{API_BASE_URL}/v1/breach-analytics?email={quote(email)}",
+            f"{API_BASE_URL}/v1/breach-analytics?email={quote(email, safe='')}",
             timeout=20,
         )
         status_api = _registrar_status_api(response)
@@ -836,14 +914,6 @@ def buscar_analytics(email):
                 time.monotonic() - inicio,
             )
             return None
-        registrar_evento_api(
-            "breach-analytics",
-            response.status_code,
-            inicio,
-            status_api,
-            response_size,
-            True,
-        )
         resultado = response.json()
         if not isinstance(resultado, dict):
             registrar_evento_api(
@@ -855,6 +925,14 @@ def buscar_analytics(email):
                 False,
             )
             return None
+        registrar_evento_api(
+            "breach-analytics",
+            response.status_code,
+            inicio,
+            status_api,
+            response_size,
+            True,
+        )
         LOGGER.info("Consulta de analytics concluída (%.2fs)", time.monotonic() - inicio)
         return resultado
     except (requests.exceptions.RequestException, ValueError, TypeError) as error:

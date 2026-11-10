@@ -178,12 +178,14 @@ def render_breach_card(detalhe):
 
 def mostrar_resumo(analytics, total):
     """Exibe métricas resumidas do relatório detalhado de analytics."""
-    if not analytics:
+    if not isinstance(analytics, dict):
         return
-    detalhes = analytics.get("ExposedBreaches", {}).get("breaches_details", [])
+    exposed = analytics.get("ExposedBreaches")
+    detalhes = exposed.get("breaches_details", []) if isinstance(exposed, dict) else []
     senhas = sum("password" in str(item.get("xposed_data", "")).lower() for item in detalhes)
     dados = {item for detalhe in detalhes for item in formatar_dados_vazados(detalhe.get("xposed_data", ""))}
-    metricas = analytics.get("BreachMetrics", {})
+    metricas = analytics.get("BreachMetrics")
+    metricas = metricas if isinstance(metricas, dict) else {}
     risco = metricas.get("risk", [{}])
     risco = risco[0] if isinstance(risco, list) and risco else risco
     score = risco.get("risk_score", "—") if isinstance(risco, dict) else "—"

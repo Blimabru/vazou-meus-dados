@@ -129,7 +129,8 @@ def render_resultado(vazamentos, analytics, status_api=None):
             "não está disponível no momento. Exibindo os dados básicos."
         )
 
-    metricas = analytics.get("BreachMetrics", {}) if analytics else {}
+    metricas = analytics.get("BreachMetrics") if isinstance(analytics, dict) else None
+    metricas = metricas if isinstance(metricas, dict) else {}
     risco = metricas.get("risk", [{}])
     risco = risco[0] if isinstance(risco, list) and risco else risco
     score = risco.get("risk_score", "—") if isinstance(risco, dict) else "—"
@@ -138,7 +139,8 @@ def render_resultado(vazamentos, analytics, status_api=None):
     nivel_pt = {"low": "Baixo", "medium": "Médio", "moderate": "Médio", "high": "Alto", "critical": "Crítico"}.get(nivel, risco.get("risk_label", "Alto") if isinstance(risco, dict) else "Alto")
 
     mostrar_resumo(analytics, len(vazamentos))
-    detalhes = analytics.get("ExposedBreaches", {}).get("breaches_details", []) if analytics else []
+    exposed = analytics.get("ExposedBreaches") if isinstance(analytics, dict) else None
+    detalhes = exposed.get("breaches_details", []) if isinstance(exposed, dict) else []
     st.markdown("<div class='section-title'><h3>🔎 Vazamentos identificados</h3></div>", unsafe_allow_html=True)
     if detalhes:
         for detalhe in detalhes:
@@ -223,7 +225,8 @@ def main():
             vazamentos = buscar_vazamentos(email)
             status_api = obter_status_api()
             analytics = buscar_analytics(email) if vazamentos else None
-            detalhes = analytics.get("ExposedBreaches", {}).get("breaches_details", []) if analytics else []
+            exposed = analytics.get("ExposedBreaches") if isinstance(analytics, dict) else None
+            detalhes = exposed.get("breaches_details", []) if isinstance(exposed, dict) else []
             registrar_busca(vazamentos, detalhes, analytics)
             st.session_state.resultado_vazamentos = vazamentos
             st.session_state.resultado_analytics = analytics
