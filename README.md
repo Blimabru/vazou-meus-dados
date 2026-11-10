@@ -135,7 +135,49 @@ O navegador abrirá automaticamente em `http://localhost:8501`.
 
 ### Opção 2: Implantação via Docker
 
-Ideal para infraestruturas utilizando Portainer ou gerenciadores de stacks. O arquivo `docker-compose.yml` já está configurado para instalar dependências do `requirements.txt` e expor a aplicação em porta 8501 para acoplamento com proxies reversos externos, como NGINX UI ou Traefik.
+Ideal para infraestruturas utilizando Portainer ou gerenciadores de stacks. O arquivo `docker-compose.yml` instala as dependências do `requirements.txt` e permite configurar IP, portas e volume por variáveis de ambiente.
+
+#### Variáveis de ambiente
+
+Copie `.env.example` para `.env` na mesma pasta do `docker-compose.yml` e ajuste os valores:
+
+| Variável | Obrigatória | Padrão | Descrição |
+|---|---:|---|---|
+| `HOST_IP` | Não | `127.0.0.1` | IP do host onde a porta será publicada. Use `0.0.0.0` para todas as interfaces. |
+| `HOST_PORT` | Não | `8501` | Porta exposta no host. |
+| `CONTAINER_PORT` | Não | `8501` | Porta do Streamlit dentro do contêiner. |
+| `APP_VOLUME` | Não | `.` | Caminho do projeto no host montado em `/app`. |
+
+Exemplo para execução local:
+
+```env
+HOST_IP=127.0.0.1
+HOST_PORT=8501
+CONTAINER_PORT=8501
+APP_VOLUME=.
+```
+
+Em produção, use um caminho absoluto para o volume:
+
+```env
+HOST_IP=0.0.0.0
+HOST_PORT=8501
+CONTAINER_PORT=8501
+APP_VOLUME=/opt/vazou-meus-dados
+```
+
+O arquivo `.env` não deve conter segredos e não deve ser versionado. Os valores
+podem ser fornecidos diretamente ao executar `docker compose` ou cadastrados
+na seção **Environment variables** de uma Stack no Portainer.
+
+No Portainer, adicione estas mesmas variáveis:
+
+```text
+HOST_IP=0.0.0.0
+HOST_PORT=8501
+CONTAINER_PORT=8501
+APP_VOLUME=/opt/vazou-meus-dados
+```
 
 1. Crie o arquivo `docker-compose.yml`:
 
@@ -178,7 +220,7 @@ services:
     # aplicação aceite tráfego externo à interface de rede isolada do contêiner.
     command: >
       sh -c "pip install -r requirements.txt &&
-      streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
+      streamlit run app.py --server.port=${CONTAINER_PORT:-8501} --server.address=0.0.0.0"
       
     # ── 3. Topologia de Rede e Exposição ──────────────────────────────────────
     
@@ -187,7 +229,7 @@ services:
       # Expõe o serviço nativamente no Host para que balanceadores de carga ou
       # proxies reversos localizados em outras sub-redes/VMs possam rotear
       # o tráfego HTTP/WebSocket adequadamente.
-      - "8501:8501"
+      - "${HOST_IP:-127.0.0.1}:${HOST_PORT:-8501}:${CONTAINER_PORT:-8501}"
       
     # ── 4. Gerenciamento de Volumes e Persistência ────────────────────────────
     
@@ -196,7 +238,7 @@ services:
       # para dentro do diretório '/app' do contêiner.
       # Vantagem: Permite edição do código ('app.py') e aplicação imediata
       # no frontend sem necessidade de recriar (build) a imagem do Docker.
-      - ./:/app
+      - "${APP_VOLUME:-.}:/app"
 
     # ── 5. Políticas de Retenção de Logs ──────────────────────────────────────
     
