@@ -191,7 +191,7 @@ APP_VOLUME=/opt/vazou-meus-dados
 # ==============================================================================
 
 services:
-  vazou_meus_dados:
+  vazou-meus-dados:
     # ── 1. Imagem e Configuração do Contêiner ─────────────────────────────────
     
     # Utiliza a variação 'slim' do Debian com Python 3.11 pré-instalado.
@@ -200,8 +200,8 @@ services:
     image: python:3.11-slim
     
     # Nome fixo e identificável para facilitar a administração via CLI 
-    # (ex: docker logs vazou_meus_dados_app) e painéis de gerência (Portainer).
-    container_name: vazou_meus_dados_app
+    # (ex: docker logs vazou-meus-dados_app) e painéis de gerência (Portainer).
+    container_name: vazou-meus-dados_app
     
     # Define o diretório raiz de trabalho dentro do sistema de arquivos do
     # contêiner. Todas as instruções subsequentes assumirão este escopo.
